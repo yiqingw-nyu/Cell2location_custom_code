@@ -1,0 +1,153 @@
+--Date: 8/4/2024
+--Title: Seurat preprocessing, SCT normalization, and cell marker spatial plot
+--Author: Yiqing Wang
+
+This script performs Seurat preprocessing and SCT normalization on spatial data,
+and it plots the spatial distribution of cell markers.
+
+Please note that the cell marker plots were only made for B1 sample and selected cell types of A1 sample, for demonstration. 
+
+INPUT: raw spatial data, list of markers
+
+OUTPUT: 
+
+1. Seurat spatial QC plots before and after SCTransform
+
+2. spatial distribution of markers for a cell type; each subplot is one marker
+
+#### 1. Load libraries, specify cell markers, and load spatial data
+
+```{r, message=F}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+```
+
+```{r}
+sample_id <- "B1"
+sample_name <- "sample_name" # sample name to display in file names
+
+# Folder to the spaceranger output; data_dir should point to the filtered_feature_bc_matrix/ folder.
+data_folder <- "path/to/data/spaceranger"
+data_dir <- file.path(data_folder, paste0("count-", sample_id), 
+                      "outs", "filtered_feature_bc_matrix")
+
+out_folder <- "path/to/data/test_results"
+out_dir <- file.path(out_folder, paste0(sample_id, "_run_name"), "cell_markers_seurat")
+```
+
+```{r}
+# Specify cell type and its list of markers
+
+cell_type <- "BAM"
+
+# cell_markers <- c("Ms4a1", "Cd19", "Cd79a", "Cd79b", "Ighm") # B cell
+# cell_markers <- c("Cd3d", "Cd3g", "Cd3e", "Trbc1", "Trbc2", "Trac", "Cd2", "Cd7") # T cell
+cell_markers <- c("Ptprc", "Mertk", "Cd14", "Fcgr1a", "Fcgr1b") # BAM
+# cell_markers <- c("Nkg7", "Klrd1", "Klre1", "Klrf1") # NK
+# cell_markers <- c("Il2rb", "Gata3") # NKT
+# cell_markers <- c("Egfl7", "Egfl8", "Flt1") # Endo
+# cell_markers <- c("Itgam", "Cx3cr1", "Csf1r", "Cd68") # Micro-PVM
+
+# cell_markers <- c("Slc17a7", "Slc17a6", "Slc17a8", "Slc1a1", "Grin1") # Glutamatergic neurons
+# cell_markers <- c("Gad1", "Gad2", "Slc32a1", "Gabbr2", "Slc6a1") # GABAergic neurons
+```
+
+```{r}
+# Load spatial data
+so <- Load10X_Spatial(data.dir = data_dir)
+so$orig.ident <- sample_name
+```
+
+#### 2. Plot QC and SCTransform
+
+```{r}
+# Violin plot of spot total UMI distribution
+totalUMI_vln <- VlnPlot(so, features = "nCount_Spatial", pt.size = 0.1) + NoLegend()
+
+# Spatial plot of spot total UMI
+totalUMI_sp <- SpatialFeaturePlot(so, features = "nCount_Spatial", pt.size.factor = 2.5) + 
+  theme(legend.position = "right")
+wrap_plots(totalUMI_vln, totalUMI_sp)
+
+png(filename = file.path(out_dir, "total_UMI_vlnPlot.png"), height = 2000, width = 2000, res = 300)
+print(totalUMI_vln)
+dev.off()
+
+png(filename = file.path(out_dir, "total_UMI_spatialPlot.png"), height = 2000, width = 2400, res = 300)
+print(totalUMI_sp)
+dev.off()
+```
+
+```{r}
+so <- SCTransform(so, assay = "Spatial", verbose = T)
+# Please note that SCT does gene selection, so some genes are filtered out.
+```
+
+```{r}
+# Spatial plot of SCTrasnformed counts
+totalUMI_sp_sct <- SpatialFeaturePlot(so, features = "nCount_SCT", pt.size.factor = 2.2) + 
+  theme(legend.position = "right")
+wrap_plots(totalUMI_sp_sct)
+
+png(filename = file.path(out_dir, "total_UMI_SCT_spatialPlot.png"), height = 2000, width = 2400, res = 300)
+print(totalUMI_sp_sct)
+dev.off()
+```
+
+#### 3. Plot spatial distribution of markers
+
+```{r}
+# Set normalized or raw counts to plot
+DefaultAssay(so) <- "SCT" # SCT assay
+# DefaultAssay(so) <- "Spatial" # raw assay
+```
+
+##### 3.1. Remove markers that are not present or have 0 counts in all spots in SCT data
+
+```{r}
+expression_matrix <- GetAssayData(so, layer = "data") # SCT assay
+# expression_matrix <- GetAssayData(so, layer = "counts") # raw assay
+
+for (gene in cell_markers) {
+  if (!gene %in% row.names(so)) {
+    print(paste(gene, "not present in SCT spatial data."))
+    cell_markers <- cell_markers[cell_markers != gene]
+  } else {
+    if (all(expression_matrix[gene, ] == 0)) {
+      print(paste(gene, "has 0 counts in all spots in SCT spatial data."))
+      cell_markers <- cell_markers[cell_markers != gene]
+    }
+  }
+}
+
+print(paste("new cell marker list:", paste(cell_markers, collapse = ", ")))
+```
+
+##### 3.2 Plot spatial distribution of markers for a cell type; each subplot is one marker
+
+```{r}
+gene_sp <- SpatialFeaturePlot(so, features = cell_markers, alpha = c(0.6, 1),
+                              pt.size.factor = 2.5) # graphic parameters can be optimized
+
+# Set legends to the right side for each subplot
+for (i in 1:length(gene_sp)) {
+  gene_sp[[i]] <- gene_sp[[i]] + 
+    theme(legend.position = "right", 
+          legend.title = element_text(size=10),  # smaller legend title text
+          legend.text = element_text(size=8))
+}
+
+# Add cell type name to plot
+gene_sp <- gene_sp + plot_annotation(subtitle = cell_type)
+
+# Plot size parameters:
+# 3 col 1 row: height=1000, width=3000
+# 4 col 1 row: height=1000, width=4000
+png(filename = file.path(out_dir, 
+                         paste(sample_name, cell_type, "marker_spatial.png", sep = "_")), 
+    height = 1000, width = 3000, res = 300) # may need to adjust plot size based on number of subplots
+print(gene_sp)
+dev.off()
+```
+

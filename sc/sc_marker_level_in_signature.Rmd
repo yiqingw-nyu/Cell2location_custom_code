@@ -1,0 +1,133 @@
+--Title: Checking Marker's Cell Type Specificity by Its Level in Cell Type Signatures
+--Author: Yiqing Wang
+--Date: 8/1/2024
+
+INPUT: 
+
+1. CSV of model-estimated cell type signatures
+2. marker list for a cell type
+
+OUPUT: bar plot showing the model-estimated cell type signature levels of markers for a specified cell type
+
+#### 0. Description: for each gene in a marker list for a cell type, make a bar plot of its level in its corresponding cell type and its levels in all other cell types, to show the marker's **specificity** to its cell type. The "level" here means the marker's value in NB model-estimated cell type signatures. 
+
+```{r}
+library(purrr)
+library(ggplot2)
+library(gridExtra)
+```
+
+#### 1. Input information
+
+```{r}
+data_dir <- "path/to/data/test_results/run_name"
+out_dir <- file.path(data_dir, "cell_markers")
+
+# Read the CSV file with cell type signatures (computed by NB model)
+inf_aver <- read.csv(file = file.path(data_dir, "inf_aver.csv"), row.names = 1)
+```
+
+```{r}
+# Cell type entries to choose from:
+# (Note that the cell type name formats are those of the column names of the cell type signature data frame.)
+# B.cells, BAM, Endo, Micro.PVM, NK.NKT.cells, T.cells
+
+cell_type <- "Micro.PVM"
+
+cell_type_print <- "Micro-PVM" # This is the cell type name to display in the plot title.
+
+# Marker lists:
+# marker_list <- c("Cd79a", "Cd79b", "Ighm") # B.cells
+# marker_list <- c("Ptprc", "Mertk", "Cd14") # BAM
+# marker_list <- c("Egfl7", "Egfl8", "Flt1") # Endo
+marker_list <- c("Itgam", "Cx3cr1", "Csf1r", "Cd68") # Micro.PVM
+# marker_list <- c("Nkg7", "Klrd1", "Klre1") # NK.NKT.cells
+# marker_list <- c("Cd3d", "Cd3e", "Cd3g", "Trbc1", "Trbc2", "Trac", "Cd2", "Cd7") # T.cells
+```
+
+#### 2. Check if all markers are present in the cell type signature data frame, and remove genes not present
+
+```{r}
+if (any(!marker_list %in% row.names(inf_aver))) {
+  # Get gene(s) not present in cell type signature data frame
+  not_in_df <- marker_list[!marker_list %in% row.names(inf_aver)]
+  # Concatenate the not-present gene list and print warning
+  print(paste("WARNING:", paste(not_in_df, collapse = ", "), 
+              "not present in cell type signatures"), quote = F)
+  
+  # Remove not-present gene(s) from marker list
+  marker_list <- marker_list[marker_list %in% row.names(inf_aver)]
+} else {
+  print("All markers present in cell type signatures", quote = F)
+}
+```
+
+#### 3. Plot one marker's level in its corresponding cell type and in all other cell types
+
+```{r}
+# This function takes one marker as input and shows, in a bar plot, its level in 
+# its corresponding cell type against its level in all other cell types.
+# SIG_DF: data frame of cell type signatures (gene X cell type)
+# MARKER: cell marker
+# HIGHLIGHT_TYPE: the cell marker's corresponding cell type
+
+plotMarkerAllCellType <- function(sig_df, marker, highlight_type) {
+  marker_vec <- unlist(sig_df[marker, ]) # Convert list to vector
+  marker_df <- data.frame(cell_type = colnames(sig_df), value = marker_vec)
+  # Make a data frame to help highlight the cell marker's corresponding cell type
+  marker_df$highlight <- ifelse(marker_df$cell_type == highlight_type, 
+                                TRUE, FALSE)
+  
+  bp <- ggplot(data = marker_df, mapping = aes(x = cell_type, y = value, 
+                                               fill = highlight)) +
+    geom_bar(stat = "identity") +
+    labs(x = "", y = paste(marker, "Level"), 
+         title = marker) +
+    scale_fill_manual(values = c("skyblue", "coral1")) + # Use different color for hightlighted cell type
+    guides(fill = F) +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  return(bp)
+}
+
+# to test run with one gene:
+# bp <- plotMarkerAllCellType(sig_df = inf_aver, marker = "Cd79a", highlight_type = cell_type)
+# print(bp)
+```
+
+#### 4. Put bar plots from individual markers together in a list
+
+```{r}
+# This function calls plotMarkerALlCellType() to make a plot for each marker
+# in a list and returns a list of resulting ggplot objects.
+
+makePlotList <- function(sig_df, marker_list, highlight_type) {
+  plot_list <- list()
+  for (gene in marker_list) {
+    bp <- plotMarkerAllCellType(sig_df = sig_df, marker = gene, 
+                                highlight_type = highlight_type)
+    plot_list[[gene]] <- bp
+  }
+  return(plot_list)
+}
+```
+
+#### 5. Arrange bar plots together and save
+
+```{r}
+# Main function call
+plot_list <- makePlotList(sig_df = inf_aver, marker_list = marker_list, 
+                          highlight_type = cell_type)
+
+# Be sure to customize plotting parameters; some recommended plot sizes are:
+# 3 plots, one row: width=4000, height=1000, ncol=3
+# 7 plots, two rows: width=5500, height=2000, ncol=4
+# 4 plots, one row: width=5500, height=1000, ncol=4
+png(filename = file.path(out_dir, 
+                         paste0(cell_type, "_marker_cell_type_signature.png")),
+    width = 5500, height = 1000, res = 300)
+# Arrange list of plots together
+grid.arrange(grobs = plot_list, ncol = 4, top = paste(cell_type_print, "Marker Levels in Cell Type Signatures"))
+dev.off()
+```
